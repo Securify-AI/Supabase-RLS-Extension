@@ -20,6 +20,7 @@ import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.extension.ExtensionUnloadingHandler;
 import burp.api.montoya.logging.Logging;
+import burp.api.montoya.scanner.scancheck.ScanCheckType;
 import com.supabase.rlsscanner.core.InstanceStore;
 import com.supabase.rlsscanner.core.ScannerConfig;
 import com.supabase.rlsscanner.scanner.ActiveScanner;
@@ -62,13 +63,13 @@ public class SupabaseRlsScanner implements BurpExtension {
             // Initialize core components
             initializeCoreComponents();
             
-            // Register HTTP handler for passive scanning
-            api.http().registerHttpHandler(passiveScanner);
-            logging.logToOutput("[+] Registered passive scanner");
-            
-            // Register scanner check
-            api.scanner().registerScanCheck(scanCheck);
-            logging.logToOutput("[+] Registered scanner check");
+            // Register passive scanner check using modern Montoya API
+            api.scanner().registerPassiveScanCheck(scanCheck, ScanCheckType.PER_REQUEST);
+            logging.logToOutput("[+] Registered passive scanner check");
+
+            // Register active scanner check using modern Montoya API
+            api.scanner().registerActiveScanCheck(scanCheck, ScanCheckType.PER_REQUEST);
+            logging.logToOutput("[+] Registered active scanner check");
             
             // Register UI tab
             api.userInterface().registerSuiteTab(EXTENSION_NAME, scannerPanel);
@@ -81,6 +82,8 @@ public class SupabaseRlsScanner implements BurpExtension {
             logging.logToOutput("[*] Extension loaded successfully!");
             logging.logToOutput("[*] Passive scanning: " +
                 (config.isPassiveScanningEnabled() ? "ENABLED" : "DISABLED"));
+            logging.logToOutput("[*] Active testing: " +
+                (config.isActiveTestingEnabled() ? "ENABLED" : "DISABLED"));
             logging.logToOutput("[*] Auto-enumerate: " +
                 (config.isAutoEnumerateEnabled() ? "ENABLED" : "DISABLED"));
             logging.logToOutput("[*] Browse the target application to discover Supabase instances.");
@@ -120,21 +123,20 @@ public class SupabaseRlsScanner implements BurpExtension {
         activeScanner = new ActiveScanner(api, config);
         logging.logToOutput("[+] Initialized active scanner");
 
-        // Passive scanner
-        passiveScanner = new PassiveScanner(api, config, instanceStore);
-        passiveScanner.setActiveScanner(activeScanner);  // Wire up for auto-enumeration
-        logging.logToOutput("[+] Initialized passive scanner");
-
-        // Burp scanner check
+        // Burp scanner check (passive & active)
         scanCheck = new SupabaseScanCheck(api, config, instanceStore, activeScanner);
         logging.logToOutput("[+] Initialized scanner check");
 
+        // Passive scanner (kept for compatibility)
+        passiveScanner = new PassiveScanner(api, config, instanceStore);
+        passiveScanner.setActiveScanner(activeScanner);
+
         // UI Panel
-        scannerPanel = new ScannerPanel(api, config, instanceStore, activeScanner, passiveScanner);
+        scannerPanel = new ScannerPanel(api, config, instanceStore, activeScanner, scanCheck, passiveScanner);
         logging.logToOutput("[+] Initialized UI panel");
 
-        // Wire up PassiveScanner status listener to UI panel
-        passiveScanner.setStatusListener(scannerPanel::logStatus);
+        // Wire up scan check status listener to UI panel
+        scanCheck.setStatusListener(scannerPanel::logStatus);
     }
     
     /**
@@ -158,4 +160,3 @@ public class SupabaseRlsScanner implements BurpExtension {
         }
     }
 }
-

@@ -7,12 +7,14 @@ package com.supabase.rlsscanner.ui;
 
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.logging.Logging;
+import burp.api.montoya.scanner.audit.issues.AuditIssue;
 import com.supabase.rlsscanner.core.InstanceStore;
 import com.supabase.rlsscanner.core.ScannerConfig;
 import com.supabase.rlsscanner.models.ScanResult;
 import com.supabase.rlsscanner.models.SupabaseInstance;
 import com.supabase.rlsscanner.scanner.ActiveScanner;
 import com.supabase.rlsscanner.scanner.PassiveScanner;
+import com.supabase.rlsscanner.scanner.SupabaseScanCheck;
 import com.supabase.rlsscanner.utils.ReportExporter;
 
 import javax.swing.*;
@@ -24,6 +26,7 @@ import java.io.File;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Main UI panel for the Supabase RLS Scanner extension.
@@ -35,6 +38,7 @@ public class ScannerPanel extends JPanel {
     private final ScannerConfig config;
     private final InstanceStore instanceStore;
     private final ActiveScanner activeScanner;
+    private final SupabaseScanCheck scanCheck;
     private final PassiveScanner passiveScanner;
 
     // UI Components
@@ -55,12 +59,25 @@ public class ScannerPanel extends JPanel {
 
     public ScannerPanel(MontoyaApi api, ScannerConfig config,
                         InstanceStore instanceStore, ActiveScanner activeScanner,
+                        SupabaseScanCheck scanCheck) {
+        this(api, config, instanceStore, activeScanner, scanCheck, null);
+    }
+
+    public ScannerPanel(MontoyaApi api, ScannerConfig config,
+                        InstanceStore instanceStore, ActiveScanner activeScanner,
                         PassiveScanner passiveScanner) {
+        this(api, config, instanceStore, activeScanner, null, passiveScanner);
+    }
+
+    public ScannerPanel(MontoyaApi api, ScannerConfig config,
+                        InstanceStore instanceStore, ActiveScanner activeScanner,
+                        SupabaseScanCheck scanCheck, PassiveScanner passiveScanner) {
         this.api = api;
         this.logging = api.logging();
         this.config = config;
         this.instanceStore = instanceStore;
         this.activeScanner = activeScanner;
+        this.scanCheck = scanCheck;
         this.passiveScanner = passiveScanner;
         this.executor = Executors.newSingleThreadExecutor();
 
@@ -336,16 +353,27 @@ public class ScannerPanel extends JPanel {
         emailLabel.setForeground(new Color(0, 102, 204));
         emailBox.add(emailLabel);
 
+        // Run mail invocation off the EDT to keep Burp UI responsive
         emailBox.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseClicked(java.awt.event.MouseEvent e) {
-                try {
-                    Desktop.getDesktop().mail(new java.net.URI("mailto:contact@securifyai.co"));
-                } catch (Exception ex) {
-                    // Fallback: copy to clipboard
-                    copyToClipboard("contact@securifyai.co");
-                    logStatus("Email copied to clipboard: contact@securifyai.co");
-                }
+                executor.submit(() -> {
+                    try {
+                        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.MAIL)) {
+                            Desktop.getDesktop().mail(new java.net.URI("mailto:contact@securifyai.co"));
+                        } else {
+                            copyToClipboard("contact@securifyai.co");
+                            SwingUtilities.invokeLater(() ->
+                                logStatus("Email copied to clipboard: contact@securifyai.co")
+                            );
+                        }
+                    } catch (Exception ex) {
+                        copyToClipboard("contact@securifyai.co");
+                        SwingUtilities.invokeLater(() ->
+                            logStatus("Email copied to clipboard: contact@securifyai.co")
+                        );
+                    }
+                });
             }
             @Override
             public void mouseEntered(java.awt.event.MouseEvent e) {
@@ -452,6 +480,14 @@ public class ScannerPanel extends JPanel {
             try {
                 ScanResult result = activeScanner.scanInstance(instance);
 
+                // Wire findings into Burp's Scanner issue panel via SiteMap
+                if (scanCheck != null) {
+                    List<AuditIssue> issues = scanCheck.createRlsBypassIssues(instance, null);
+                    for (AuditIssue issue : issues) {
+                        api.siteMap().add(issue);
+                    }
+                }
+
                 SwingUtilities.invokeLater(() -> {
                     instanceTableModel.updateInstance(instance);
                     vulnerableTableModel.setTables(instance.getTables());
@@ -492,7 +528,12 @@ public class ScannerPanel extends JPanel {
 
     private void onClearClicked() {
         instanceStore.clear();
-        passiveScanner.clear();
+        if (scanCheck != null) {
+            scanCheck.clear();
+        }
+        if (passiveScanner != null) {
+            passiveScanner.clear();
+        }
         instanceTableModel.clear();
         vulnerableTableModel.clear();
         statusArea.setText("");
@@ -558,10 +599,17 @@ public class ScannerPanel extends JPanel {
     }
 
     /**
-     * Shutdown the executor service.
+     * Shutdown the executor service promptly on extension unload.
      */
     public void shutdown() {
-        executor.shutdown();
+        executor.shutdownNow();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                logging.logToOutput("Executor did not terminate within 5 seconds.");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
@@ -702,4 +750,3 @@ public class ScannerPanel extends JPanel {
             .setContents(selection, selection);
     }
 }
-

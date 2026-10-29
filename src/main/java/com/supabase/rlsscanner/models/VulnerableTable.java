@@ -5,6 +5,7 @@
 
 package com.supabase.rlsscanner.models;
 
+import burp.api.montoya.http.message.HttpRequestResponse;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -47,6 +48,7 @@ public class VulnerableTable {
 
     // RLS status
     private String rlsStatus = "Unknown";
+    private HttpRequestResponse requestResponse;
 
     public VulnerableTable(String tableName) {
         this.tableName = tableName;
@@ -77,6 +79,8 @@ public class VulnerableTable {
         return String.join(", ", columns);
     }
     public String getRlsStatus() { return rlsStatus; }
+    public HttpRequestResponse getRequestResponse() { return requestResponse; }
+    public void setRequestResponse(HttpRequestResponse requestResponse) { this.requestResponse = requestResponse; }
 
     // Setters
     public void setRowCount(int rowCount) { this.rowCount = rowCount; }
